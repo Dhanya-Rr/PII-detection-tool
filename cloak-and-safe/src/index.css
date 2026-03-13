@@ -1,0 +1,216 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Data Masking Tool - Modern Cybersecurity Theme */
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap');
+
+@layer base {
+  :root {
+    --background: 220 16% 98%;
+    --foreground: 220 25% 10%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 220 25% 10%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 25% 10%;
+
+    --primary: 250 84% 54%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 220 14% 96%;
+    --secondary-foreground: 220 25% 10%;
+
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 10% 46%;
+
+    --accent: 170 80% 45%;
+    --accent-foreground: 0 0% 100%;
+
+    --success: 142 76% 36%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 100%;
+
+    --danger: 0 84% 60%;
+    --danger-foreground: 0 0% 100%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 220 13% 91%;
+    --input: 220 13% 91%;
+    --ring: 250 84% 54%;
+
+    --radius: 0.75rem;
+
+    --sidebar-background: 0 0% 98%;
+    --sidebar-foreground: 240 5.3% 26.1%;
+    --sidebar-primary: 240 5.9% 10%;
+    --sidebar-primary-foreground: 0 0% 98%;
+    --sidebar-accent: 240 4.8% 95.9%;
+    --sidebar-accent-foreground: 240 5.9% 10%;
+    --sidebar-border: 220 13% 91%;
+    --sidebar-ring: 250 84% 54%;
+
+    /* Gradient definitions */
+    --gradient-primary: linear-gradient(135deg, hsl(250 84% 54%) 0%, hsl(280 80% 60%) 100%);
+    --gradient-accent: linear-gradient(135deg, hsl(170 80% 45%) 0%, hsl(200 80% 50%) 100%);
+    --gradient-dark: linear-gradient(135deg, hsl(220 25% 10%) 0%, hsl(250 30% 20%) 100%);
+    --gradient-card: linear-gradient(145deg, hsl(0 0% 100%) 0%, hsl(220 20% 98%) 100%);
+    --gradient-mesh: radial-gradient(at 40% 20%, hsl(250 84% 54% / 0.1) 0px, transparent 50%),
+                     radial-gradient(at 80% 0%, hsl(170 80% 45% / 0.1) 0px, transparent 50%),
+                     radial-gradient(at 0% 50%, hsl(280 80% 60% / 0.08) 0px, transparent 50%);
+  }
+
+  .dark {
+    --background: 220 25% 8%;
+    --foreground: 220 14% 96%;
+
+    --card: 220 25% 12%;
+    --card-foreground: 220 14% 96%;
+
+    --popover: 220 25% 12%;
+    --popover-foreground: 220 14% 96%;
+
+    --primary: 250 84% 64%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 220 20% 18%;
+    --secondary-foreground: 220 14% 96%;
+
+    --muted: 220 20% 18%;
+    --muted-foreground: 220 10% 60%;
+
+    --accent: 170 80% 50%;
+    --accent-foreground: 0 0% 100%;
+
+    --success: 142 76% 46%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 92% 55%;
+    --warning-foreground: 0 0% 10%;
+
+    --danger: 0 84% 65%;
+    --danger-foreground: 0 0% 100%;
+
+    --destructive: 0 84% 65%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 220 20% 20%;
+    --input: 220 20% 20%;
+    --ring: 250 84% 64%;
+
+    --sidebar-background: 220 25% 10%;
+    --sidebar-foreground: 220 14% 96%;
+    --sidebar-primary: 250 84% 64%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 220 20% 18%;
+    --sidebar-accent-foreground: 220 14% 96%;
+    --sidebar-border: 220 20% 20%;
+    --sidebar-ring: 250 84% 64%;
+
+    --gradient-primary: linear-gradient(135deg, hsl(250 84% 64%) 0%, hsl(280 80% 70%) 100%);
+    --gradient-accent: linear-gradient(135deg, hsl(170 80% 50%) 0%, hsl(200 80% 55%) 100%);
+    --gradient-dark: linear-gradient(135deg, hsl(220 25% 8%) 0%, hsl(250 30% 15%) 100%);
+    --gradient-card: linear-gradient(145deg, hsl(220 25% 12%) 0%, hsl(220 25% 10%) 100%);
+    --gradient-mesh: radial-gradient(at 40% 20%, hsl(250 84% 64% / 0.15) 0px, transparent 50%),
+                     radial-gradient(at 80% 0%, hsl(170 80% 50% / 0.12) 0px, transparent 50%),
+                     radial-gradient(at 0% 50%, hsl(280 80% 70% / 0.1) 0px, transparent 50%);
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+    cursor: default;
+  }
+
+  body {
+    @apply text-foreground;
+    font-family: 'Inter', sans-serif;
+    background: linear-gradient(135deg, rgba(224, 235, 255, 1) 0%, rgba(210, 250, 240, 1) 45%, rgba(235, 220, 255, 1) 100%);
+    background-attachment: fixed;
+    min-height: 100vh;
+  }
+
+  .dark body {
+    background: linear-gradient(135deg, hsl(240 30% 12%) 0%, hsl(220 35% 10%) 25%, hsl(200 30% 11%) 50%, hsl(180 25% 10%) 75%, hsl(210 30% 11%) 100%);
+  }
+
+  code, pre, .font-mono {
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  /* Global read-only text behavior - prevent editing of informational text */
+  h1, h2, h3, h4, h5, h6, p, span, div, label, td, th, li, 
+  [class*="text-"], [class*="font-"] {
+    user-select: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+  }
+
+  /* Fix cursor for interactive elements - allow editing only for actual inputs */
+  input:not([readonly]):not([disabled]), 
+  textarea:not([readonly]):not([disabled]), 
+  [contenteditable="true"] {
+    cursor: text;
+    user-select: text;
+    -webkit-user-select: text;
+    -moz-user-select: text;
+    -ms-user-select: text;
+  }
+
+  button, a, [role="button"], select, [type="checkbox"], [type="radio"] {
+    cursor: pointer;
+  }
+
+  /* Ensure dropdown triggers and select elements are interactive but not text-editable */
+  [role="combobox"], [role="listbox"], [data-radix-select-trigger] {
+    cursor: pointer;
+    user-select: none;
+  }
+}
+
+@layer utilities {
+  .glass-effect {
+    @apply backdrop-blur-xl bg-card/80 border border-border/50;
+  }
+
+  .gradient-primary {
+    background: var(--gradient-primary);
+  }
+
+  .gradient-accent {
+    background: var(--gradient-accent);
+  }
+
+  .gradient-mesh {
+    background: var(--gradient-mesh);
+  }
+
+  .text-gradient {
+    @apply bg-clip-text text-transparent;
+    background: var(--gradient-primary);
+  }
+
+  .hover-lift {
+    @apply transition-all duration-300 hover:-translate-y-1 hover:shadow-lg;
+  }
+
+  .animate-pulse-slow {
+    animation: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+
+  .animate-float {
+    animation: float 6s ease-in-out infinite;
+  }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-10px); }
+}
