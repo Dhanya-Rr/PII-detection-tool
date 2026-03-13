@@ -649,6 +649,129 @@ class DatabaseConnectionTablesView(APIView):
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
+class DatabaseTableDataView(APIView):
+    """
+    API view for fetching actual data rows from a database table.
+    
+    GET: Return data rows from the specified table.
+    
+    Endpoint: GET /api/projects/{project_id}/db-connections/{connection_id}/table-data/{table_name}/
+    
+    Query Parameters:
+        - limit: Maximum number of rows to fetch (default: 100, max: 1000)
+    """
+    
+    permission_classes = [IsAuthenticated]
+    
+    # List of allowed characters for table names (alphanumeric + underscore)
+    VALID_TABLE_NAME_CHARS = set('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_')
+    
+    def _validate_table_name(self, table_name: str) -> bool:
+        """
+        Validate table name to prevent SQL injection.
+        
+        Only allows alphanumeric characters and underscores.
+        """
+        if not table_name or len(table_name) > 128:
+            return False
+        return all(c in self.VALID_TABLE_NAME_CHARS for c in table_name)
+    
+    def get(self, request, project_id, connection_id, table_name):
+        """
+        Fetch actual data rows from a database table.
+        
+        Args:
+            project_id: UUID of the project
+            connection_id: ID of the database connection
+            table_name: Name of the table to fetch data from
+        
+        Query Parameters:
+            limit: Max rows to return (default: 100, max: 1000)
+        
+        Returns:
+            JSON array of row objects:
+            [
+                {"id": 1, "email": "user@gmail.com", "phone": "9876543210"},
+                {"id": 2, "email": "john@yahoo.com", "phone": "9123456789"},
+                ...
+            ]
+        """
+        # Validate project ownership
+        project = get_object_or_404(
+            Project,
+            id=project_id,
+            owner=request.user
+        )
+        
+        # Get the connection (must belong to this project)
+        connection = get_object_or_404(
+            DatabaseConnection,
+            id=connection_id,
+            project=project
+        )
+        
+        # Only allow if connection is established
+        if connection.status != 'success':
+            return Response(
+                {'message': 'Connection not established. Please test the connection first.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Validate table name to prevent SQL injection
+        if not self._validate_table_name(table_name):
+            logger.warning(
+                f"[DB DATA] Invalid table name attempted: {table_name}"
+            )
+            return Response(
+                {'message': 'Invalid table name. Only alphanumeric characters and underscores are allowed.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get limit from query params (default 100, max 1000)
+        try:
+            limit = int(request.query_params.get('limit', 100))
+            limit = max(1, min(limit, 1000))  # Clamp between 1 and 1000
+        except ValueError:
+            limit = 100
+        
+        # Fetch table data
+        try:
+            data = fetch_table_data(
+                db_type=connection.db_type,
+                host=connection.host,
+                port=connection.port,
+                database_name=connection.database_name,
+                username=connection.username,
+                password=connection.password,
+                table_name=table_name,
+                limit=limit
+            )
+            
+            # Get column names from the first row (if data exists)
+            columns = list(data[0].keys()) if data else []
+            
+            logger.info(
+                f"[DB DATA] Fetched {len(data)} rows from table '{table_name}' "
+                f"(connection {connection_id}, project {project_id})"
+            )
+            
+            return Response({
+                'table_name': table_name,
+                'columns': columns,
+                'row_count': len(data),
+                'data': data
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            logger.error(
+                f"[DB DATA] Failed to fetch data from table '{table_name}': {str(e)}"
+            )
+            
+            return Response({
+                'message': f'Failed to fetch table data: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 class StartScanView(APIView):
     """
     API view for starting a PII detection scan.
@@ -991,9 +1114,14 @@ class StartMaskingJobView(APIView):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         
         table_name = serializer.validated_data.get('table_name')
+        field_configurations = serializer.validated_data.get('field_configurations', [])
         
-        # Create masking job from detected fields
-        job, fields_data = create_masking_job_from_detected_fields(project, table_name)
+        # Create masking job from detected fields with technique configurations
+        job, fields_data = create_masking_job_from_detected_fields(
+            project, 
+            table_name, 
+            field_configurations
+        )
         
         if not job:
             return Response({
@@ -1183,12 +1311,13 @@ class MaskingJobStreamView(View):
                                 mf.status = 'processing'
                                 mf.save()
                             
-                            # Audit Log: Masking Started for field
+                            # Audit Log: Masking Started for field with technique info
+                            strategy_display = event.get('strategy_display', event.get('strategy', 'Unknown'))
                             MaskingLog.objects.create(
                                 job=job,
                                 action='masking_started',
                                 step='masking',
-                                message=f'Started masking {field_name} field',
+                                message=f'Applying {strategy_display} to {field_name}',
                                 level='info',
                                 status='processing',
                                 field_name=field_name,
@@ -1206,12 +1335,13 @@ class MaskingJobStreamView(View):
                                 mf.processed_at = timezone.now()
                                 mf.save()
                             
-                            # Audit Log: Masking Completed for field
+                            # Audit Log: Masking Completed for field with technique info
+                            strategy_display = event.get('strategy_display', event.get('strategy', 'Unknown'))
                             MaskingLog.objects.create(
                                 job=job,
                                 action='masking_completed',
                                 step='masking',
-                                message=f'{field_name} field masked successfully',
+                                message=f'{field_name} masked successfully using {strategy_display}',
                                 level='success',
                                 status='completed',
                                 field_name=field_name,
@@ -1236,10 +1366,59 @@ class MaskingJobStreamView(View):
                     # Yield SSE event
                     yield f"data: {json.dumps(event)}\n\n"
                 
-                # Mark job as completed
-                job.status = 'completed'
-                job.completed_at = timezone.now()
-                job.save()
+                # ============================================================
+                # AUTO-EXECUTE: Process real database data after SSE completes
+                # ============================================================
+                # Send status update that real data processing is starting
+                processing_event = {
+                    'job_id': str(job.id),
+                    'step': 'masking',
+                    'message': 'Processing real database records...',
+                    'progress': 95,
+                    'timestamp': timezone.now().isoformat(),
+                }
+                yield f"data: {json.dumps(processing_event)}\n\n"
+                
+                try:
+                    # Execute masking on real database data
+                    from .masking_service import execute_masking_job
+                    real_result = execute_masking_job(str(job.id))
+                    
+                    # Send completion event with real data stats
+                    real_complete_event = {
+                        'job_id': str(job.id),
+                        'step': 'completed',
+                        'message': f'Masked {real_result["rows_processed"]} rows across {real_result["tables_processed"]} tables',
+                        'progress': 100,
+                        'timestamp': timezone.now().isoformat(),
+                        'tables_processed': real_result['tables_processed'],
+                        'rows_processed': real_result['rows_processed'],
+                        'datasets': real_result['datasets'],
+                        'real_data_processed': True,
+                    }
+                    yield f"data: {json.dumps(real_complete_event)}\n\n"
+                    
+                    logger.info(f"[MASKING SSE] Real data processed: {real_result['rows_processed']} rows")
+                    
+                except Exception as real_err:
+                    logger.error(f"[MASKING SSE] Real data processing failed: {str(real_err)}")
+                    # Don't fail the job, just log the error - user can retry via execute endpoint
+                    error_event = {
+                        'job_id': str(job.id),
+                        'step': 'warning',
+                        'message': f'Real data processing deferred: {str(real_err)}',
+                        'progress': 100,
+                        'timestamp': timezone.now().isoformat(),
+                        'real_data_processed': False,
+                    }
+                    yield f"data: {json.dumps(error_event)}\n\n"
+                
+                # Mark job as completed (may already be done by execute_masking_job)
+                job.refresh_from_db()
+                if job.status != 'completed':
+                    job.status = 'completed'
+                    job.completed_at = timezone.now()
+                    job.save()
                 
                 # Audit Log: Job Completed
                 MaskingLog.objects.create(
@@ -1547,3 +1726,341 @@ class AuditLogsStreamView(View):
         response['Access-Control-Allow-Origin'] = '*'
         
         return response
+
+
+# ============================================================================
+# PHASE 8: REAL DATA PROCESSING API VIEWS
+# ============================================================================
+
+from .masking_service import (
+    execute_masking_job,
+    export_masked_dataset_to_csv,
+    export_masked_dataset_to_json,
+    push_masked_data_to_database,
+    get_masked_dataset_for_export,
+)
+from .models import MaskedDataset
+
+
+class ExecuteMaskingJobView(APIView):
+    """
+    API view for executing a masking job on REAL database data.
+    
+    POST: Execute masking job with real data processing
+    """
+    
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request, project_id, job_id):
+        """
+        Execute a masking job on real database records.
+        
+        This endpoint:
+        1. Fetches real data from the connected database
+        2. Applies masking techniques to PII fields
+        3. Stores masked data in MaskedDataset model
+        
+        Returns:
+            - job_id: UUID of the masking job
+            - status: Job status
+            - tables_processed: Number of tables processed
+            - rows_processed: Total rows processed
+            - datasets: List of processed datasets
+        """
+        project = get_object_or_404(
+            Project,
+            id=project_id,
+            owner=request.user
+        )
+        
+        job = get_object_or_404(
+            MaskingJob,
+            id=job_id,
+            project=project
+        )
+        
+        # Check if job is already completed
+        if job.status == 'completed':
+            return Response({
+                'message': 'Job already completed',
+                'job_id': str(job.id),
+                'status': job.status,
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        if job.status == 'running':
+            return Response({
+                'message': 'Job is already running',
+                'job_id': str(job.id),
+                'status': job.status,
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            # Execute the masking job
+            result = execute_masking_job(str(job_id))
+            
+            return Response({
+                'message': 'Masking job executed successfully',
+                'job_id': result['job_id'],
+                'status': result['status'],
+                'tables_processed': result['tables_processed'],
+                'rows_processed': result['rows_processed'],
+                'datasets': result['datasets'],
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            logger.error(f"[EXECUTE JOB] Error: {str(e)}")
+            return Response({
+                'message': f'Failed to execute masking job: {str(e)}',
+                'job_id': str(job.id),
+                'status': 'failed',
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class ExportMaskedDataView(APIView):
+    """
+    API view for exporting masked data to CSV or JSON.
+    
+    GET: Export masked dataset as CSV or JSON file
+    """
+    
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request, project_id, job_id):
+        """
+        Export masked dataset as CSV or JSON.
+        
+        Query Parameters:
+            - format: 'csv' or 'json' (default: csv)
+            - table_name: Optional specific table to export
+        
+        Returns:
+            - File download response with masked data
+        """
+        from django.http import HttpResponse
+        
+        project = get_object_or_404(
+            Project,
+            id=project_id,
+            owner=request.user
+        )
+        
+        job = get_object_or_404(
+            MaskingJob,
+            id=job_id,
+            project=project
+        )
+        
+        # Get export format
+        export_format = request.query_params.get('format', 'csv').lower()
+        table_name = request.query_params.get('table_name')
+        
+        # Check if masked datasets exist
+        datasets = MaskedDataset.objects.filter(job=job, status='completed')
+        if not datasets.exists():
+            return Response({
+                'message': 'No masked datasets available. Execute the masking job first.',
+                'job_id': str(job.id),
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            if export_format == 'json':
+                content = export_masked_dataset_to_json(str(job_id), table_name)
+                content_type = 'application/json'
+                filename = f'masked_data_{job_id[:8]}.json'
+            else:
+                content = export_masked_dataset_to_csv(str(job_id), table_name)
+                content_type = 'text/csv'
+                filename = f'masked_data_{job_id[:8]}.csv'
+            
+            response = HttpResponse(content, content_type=content_type)
+            response['Content-Disposition'] = f'attachment; filename="{filename}"'
+            
+            # Log export action
+            MaskingLog.objects.create(
+                job=job,
+                action='job_completed',
+                step='completed',
+                message=f'Export file ready: {filename}',
+                level='success',
+                status='completed',
+            )
+            
+            return response
+            
+        except Exception as e:
+            logger.error(f"[EXPORT] Error: {str(e)}")
+            return Response({
+                'message': f'Failed to export: {str(e)}',
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class PushMaskedDataView(APIView):
+    """
+    API view for pushing masked data back to the database.
+    
+    POST: Push masked data to database
+    """
+    
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request, project_id, job_id):
+        """
+        Push masked data back to the source database.
+        
+        Request body:
+            - mode: 'update' to update original table, 'insert' to create new masked table
+                    (default: 'insert')
+        
+        Returns:
+            - status: Operation status
+            - tables_updated: Number of tables updated
+            - rows_affected: Total rows affected
+            - details: List of table-level results
+        """
+        project = get_object_or_404(
+            Project,
+            id=project_id,
+            owner=request.user
+        )
+        
+        job = get_object_or_404(
+            MaskingJob,
+            id=job_id,
+            project=project
+        )
+        
+        # Get push mode from request
+        mode = request.data.get('mode', 'insert')
+        if mode not in ['update', 'insert']:
+            return Response({
+                'message': 'Invalid mode. Use "update" or "insert".',
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Check if masked datasets exist
+        datasets = MaskedDataset.objects.filter(job=job, status='completed')
+        if not datasets.exists():
+            return Response({
+                'message': 'No masked datasets available. Execute the masking job first.',
+                'job_id': str(job.id),
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            result = push_masked_data_to_database(str(job_id), mode)
+            
+            return Response({
+                'message': 'Database updated successfully' if result['status'] == 'completed' else 'Push operation failed',
+                'status': result['status'],
+                'tables_updated': result['tables_updated'],
+                'rows_affected': result['rows_affected'],
+                'details': result['details'],
+            }, status=status.HTTP_200_OK if result['status'] == 'completed' else status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+        except Exception as e:
+            logger.error(f"[PUSH] Error: {str(e)}")
+            return Response({
+                'message': f'Failed to push to database: {str(e)}',
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class MaskedDatasetsView(APIView):
+    """
+    API view for listing masked datasets for a job.
+    
+    GET: List all masked datasets for a masking job
+    """
+    
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request, project_id, job_id):
+        """
+        List all masked datasets for a masking job.
+        
+        Returns basic info about each masked dataset (without full data).
+        """
+        project = get_object_or_404(
+            Project,
+            id=project_id,
+            owner=request.user
+        )
+        
+        job = get_object_or_404(
+            MaskingJob,
+            id=job_id,
+            project=project
+        )
+        
+        datasets = MaskedDataset.objects.filter(job=job)
+        
+        dataset_info = []
+        for ds in datasets:
+            dataset_info.append({
+                'id': ds.id,
+                'table_name': ds.table_name,
+                'original_row_count': ds.original_row_count,
+                'masked_row_count': ds.masked_row_count,
+                'column_mapping': ds.column_mapping,
+                'status': ds.status,
+                'created_at': ds.created_at.isoformat() if ds.created_at else None,
+            })
+        
+        return Response({
+            'job_id': str(job.id),
+            'datasets': dataset_info,
+            'total_datasets': len(dataset_info),
+        }, status=status.HTTP_200_OK)
+
+
+class MaskedDataPreviewView(APIView):
+    """
+    API view for previewing masked data (first few rows).
+    
+    GET: Preview masked data without downloading the full file
+    """
+    
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request, project_id, job_id):
+        """
+        Preview masked data (first 10 rows per table).
+        
+        Query Parameters:
+            - table_name: Optional specific table to preview
+            - limit: Number of rows to preview (default: 10, max: 100)
+        """
+        project = get_object_or_404(
+            Project,
+            id=project_id,
+            owner=request.user
+        )
+        
+        job = get_object_or_404(
+            MaskingJob,
+            id=job_id,
+            project=project
+        )
+        
+        table_name = request.query_params.get('table_name')
+        limit = min(int(request.query_params.get('limit', 10)), 100)
+        
+        datasets = MaskedDataset.objects.filter(job=job, status='completed')
+        if table_name:
+            datasets = datasets.filter(table_name=table_name)
+        
+        preview_data = []
+        for ds in datasets:
+            rows = ds.masked_data[:limit] if ds.masked_data else []
+            columns = list(rows[0].keys()) if rows else []
+            
+            preview_data.append({
+                'table_name': ds.table_name,
+                'columns': columns,
+                'rows': rows,
+                'total_rows': ds.masked_row_count,
+                'preview_count': len(rows),
+            })
+        
+        return Response({
+            'job_id': str(job.id),
+            'tables': preview_data,
+            'limit': limit,
+        }, status=status.HTTP_200_OK)

@@ -465,6 +465,58 @@ class MaskingJobListSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+class FieldConfigurationSerializer(serializers.Serializer):
+    """Serializer for individual field masking configuration."""
+    
+    field_id = serializers.UUIDField(
+        required=False,
+        allow_null=True,
+        help_text="UUID of the detected PII field"
+    )
+    field_name = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="Name of the field to mask"
+    )
+    table_name = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="Name of the table containing the field"
+    )
+    technique = serializers.CharField(
+        required=True,
+        help_text="Masking/anonymization technique to apply"
+    )
+    method = serializers.ChoiceField(
+        choices=['masking', 'anonymization'],
+        required=False,
+        help_text="Protection method type"
+    )
+    parameters = serializers.DictField(
+        required=False,
+        allow_empty=True,
+        help_text="Additional parameters for the technique"
+    )
+    
+    def validate_technique(self, value):
+        """Validate that the technique is supported."""
+        valid_techniques = [
+            # Data Masking
+            'partial_redaction', 'redaction', 'character_replacement', 'tokenization',
+            'shuffling', 'nulling', 'date_masking', 'data_perturbation',
+            # Anonymization
+            'generalization', 'randomization', 'hashing', 'swapping',
+            'noise_addition', 'k_anonymity', 'l_diversity',
+            # Legacy
+            'email_mask', 'phone_mask', 'name_mask', 'address_mask',
+            'account_mask', 'card_mask', 'ssn_mask', 'aadhaar_mask',
+            'pan_mask', 'generic_mask',
+        ]
+        if value not in valid_techniques:
+            raise serializers.ValidationError(f"Invalid technique: {value}")
+        return value
+
+
 class StartMaskingJobSerializer(serializers.Serializer):
     """Serializer for starting a masking job."""
     
@@ -475,7 +527,14 @@ class StartMaskingJobSerializer(serializers.Serializer):
         help_text="Optional: Specific table to mask. If not provided, masks all tables."
     )
     
+    field_configurations = FieldConfigurationSerializer(
+        many=True,
+        required=False,
+        help_text="Optional: Array of field-specific technique configurations."
+    )
+    
     def validate_table_name(self, value):
         if value == '':
             return None
         return value
+

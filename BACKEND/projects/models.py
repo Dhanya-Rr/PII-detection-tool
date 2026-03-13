@@ -426,6 +426,24 @@ class MaskingField(models.Model):
     """
     
     STRATEGY_CHOICES = [
+        # Data Masking Techniques
+        ('partial_redaction', 'Partial Redaction'),
+        ('redaction', 'Redaction'),
+        ('character_replacement', 'Character Replacement'),
+        ('tokenization', 'Tokenization'),
+        ('shuffling', 'Shuffling'),
+        ('nulling', 'Nulling'),
+        ('date_masking', 'Date Masking'),
+        ('data_perturbation', 'Data Perturbation'),
+        # Data Anonymization Techniques
+        ('generalization', 'Data Generalization'),
+        ('randomization', 'Randomization'),
+        ('hashing', 'Hashing'),
+        ('swapping', 'Swapping'),
+        ('noise_addition', 'Noise Addition'),
+        ('k_anonymity', 'k-Anonymity'),
+        ('l_diversity', 'l-Diversity'),
+        # Legacy strategies (for backward compatibility)
         ('email_mask', 'Email Masking'),
         ('phone_mask', 'Phone Masking'),
         ('name_mask', 'Name Masking'),
@@ -630,3 +648,92 @@ class MaskingLog(models.Model):
     
     def __str__(self):
         return f"[{self.action}] {self.message}"
+
+
+# ============================================================================
+# PHASE 8: MASKED DATASET STORAGE MODEL
+# ============================================================================
+
+class MaskedDataset(models.Model):
+    """
+    Model for storing masked/anonymized data from real database processing.
+    
+    Stores the actual masked rows as JSON, allowing for export and
+    push-back to the source database.
+    
+    Attributes:
+        job: The masking job that created this dataset
+        table_name: Name of the source table
+        original_row_count: Number of rows in the original table
+        masked_row_count: Number of rows in the masked dataset
+        column_mapping: JSON mapping of columns to masking strategies used
+        masked_data: JSON array of masked row dictionaries
+        created_at: Timestamp when the dataset was created
+        status: Processing status (pending, processing, completed, failed)
+    """
+    
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('processing', 'Processing'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+    ]
+    
+    job = models.ForeignKey(
+        MaskingJob,
+        on_delete=models.CASCADE,
+        related_name='masked_datasets',
+        help_text="Masking job that created this dataset"
+    )
+    
+    table_name = models.CharField(
+        max_length=255,
+        help_text="Name of the source table"
+    )
+    
+    original_row_count = models.IntegerField(
+        default=0,
+        help_text="Number of rows in the original table"
+    )
+    
+    masked_row_count = models.IntegerField(
+        default=0,
+        help_text="Number of rows in the masked dataset"
+    )
+    
+    column_mapping = models.JSONField(
+        default=dict,
+        help_text="JSON mapping of column names to masking strategies"
+    )
+    
+    masked_data = models.JSONField(
+        default=list,
+        help_text="JSON array of masked row dictionaries"
+    )
+    
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        help_text="When the dataset was created"
+    )
+    
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='pending',
+        help_text="Processing status"
+    )
+    
+    error_message = models.TextField(
+        blank=True,
+        default='',
+        help_text="Error message if processing failed"
+    )
+    
+    class Meta:
+        db_table = 'masked_datasets'
+        ordering = ['-created_at']
+        verbose_name = 'Masked Dataset'
+        verbose_name_plural = 'Masked Datasets'
+    
+    def __str__(self):
+        return f"MaskedDataset for {self.table_name} (Job: {self.job_id})"

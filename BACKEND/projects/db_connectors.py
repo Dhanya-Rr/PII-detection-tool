@@ -827,3 +827,393 @@ def fetch_table_data(
         raise ValueError(f"Unsupported database type: {db_type}")
     
     return fetcher(host, port, database_name, username, password, table_name, limit)
+
+
+# ============================================================================
+# DATABASE UPDATE FUNCTIONS (For Pushing Masked Data)
+# ============================================================================
+
+def update_postgres_table(
+    host: str,
+    port: int,
+    database_name: str,
+    username: str,
+    password: str,
+    table_name: str,
+    rows: List[Dict[str, Any]],
+    masked_columns: List[str],
+) -> int:
+    """
+    Update PostgreSQL table with masked data.
+    
+    Updates only masked columns for each row, using the 'id' field as the key.
+    
+    Args:
+        host: Database host
+        port: Database port
+        database_name: Database name
+        username: Username
+        password: Password
+        table_name: Table to update
+        rows: List of row dictionaries with masked values
+        masked_columns: List of column names that were masked
+    
+    Returns:
+        Number of rows affected
+    """
+    try:
+        import psycopg2
+        
+        port = port or 5432
+        
+        connection = psycopg2.connect(
+            host=host,
+            port=port,
+            database=database_name,
+            user=username,
+            password=password,
+            connect_timeout=10
+        )
+        
+        cursor = connection.cursor()
+        rows_affected = 0
+        
+        for row in rows:
+            # Get the primary key (assume 'id' column)
+            row_id = row.get('id')
+            if row_id is None:
+                continue
+            
+            # Build UPDATE statement for masked columns only
+            set_clauses = []
+            values = []
+            for col in masked_columns:
+                if col in row:
+                    set_clauses.append(f'"{col}" = %s')
+                    values.append(row[col])
+            
+            if not set_clauses:
+                continue
+            
+            query = f'UPDATE "{table_name}" SET {", ".join(set_clauses)} WHERE id = %s'
+            values.append(row_id)
+            
+            cursor.execute(query, values)
+            rows_affected += cursor.rowcount
+        
+        connection.commit()
+        cursor.close()
+        connection.close()
+        
+        logger.info(f"[DB UPDATE] Updated {rows_affected} rows in PostgreSQL table {table_name}")
+        return rows_affected
+        
+    except Exception as e:
+        logger.error(f"[DB UPDATE] Failed to update PostgreSQL table: {str(e)}")
+        raise
+
+
+def update_mysql_table(
+    host: str,
+    port: int,
+    database_name: str,
+    username: str,
+    password: str,
+    table_name: str,
+    rows: List[Dict[str, Any]],
+    masked_columns: List[str],
+) -> int:
+    """
+    Update MySQL table with masked data.
+    """
+    try:
+        import mysql.connector
+        
+        port = port or 3306
+        
+        connection = mysql.connector.connect(
+            host=host,
+            port=port,
+            database=database_name,
+            user=username,
+            password=password,
+            connection_timeout=10
+        )
+        
+        cursor = connection.cursor()
+        rows_affected = 0
+        
+        for row in rows:
+            row_id = row.get('id')
+            if row_id is None:
+                continue
+            
+            set_clauses = []
+            values = []
+            for col in masked_columns:
+                if col in row:
+                    set_clauses.append(f'`{col}` = %s')
+                    values.append(row[col])
+            
+            if not set_clauses:
+                continue
+            
+            query = f'UPDATE `{table_name}` SET {", ".join(set_clauses)} WHERE id = %s'
+            values.append(row_id)
+            
+            cursor.execute(query, values)
+            rows_affected += cursor.rowcount
+        
+        connection.commit()
+        cursor.close()
+        connection.close()
+        
+        logger.info(f"[DB UPDATE] Updated {rows_affected} rows in MySQL table {table_name}")
+        return rows_affected
+        
+    except Exception as e:
+        logger.error(f"[DB UPDATE] Failed to update MySQL table: {str(e)}")
+        raise
+
+
+def update_sqlite_table(
+    database_name: str,
+    table_name: str,
+    rows: List[Dict[str, Any]],
+    masked_columns: List[str],
+) -> int:
+    """
+    Update SQLite table with masked data.
+    """
+    try:
+        db_path = database_name.strip() if database_name and database_name.strip() else DEFAULT_SQLITE_DB
+        
+        if not os.path.isabs(db_path):
+            module_dir = os.path.dirname(os.path.abspath(__file__))
+            backend_dir = os.path.dirname(module_dir)
+            db_path = os.path.join(backend_dir, db_path)
+        
+        connection = sqlite3.connect(db_path, timeout=10)
+        cursor = connection.cursor()
+        rows_affected = 0
+        
+        for row in rows:
+            row_id = row.get('id')
+            if row_id is None:
+                continue
+            
+            set_clauses = []
+            values = []
+            for col in masked_columns:
+                if col in row:
+                    set_clauses.append(f'`{col}` = ?')
+                    values.append(row[col])
+            
+            if not set_clauses:
+                continue
+            
+            query = f'UPDATE `{table_name}` SET {", ".join(set_clauses)} WHERE id = ?'
+            values.append(row_id)
+            
+            cursor.execute(query, values)
+            rows_affected += cursor.rowcount
+        
+        connection.commit()
+        cursor.close()
+        connection.close()
+        
+        logger.info(f"[DB UPDATE] Updated {rows_affected} rows in SQLite table {table_name}")
+        return rows_affected
+        
+    except Exception as e:
+        logger.error(f"[DB UPDATE] Failed to update SQLite table: {str(e)}")
+        raise
+
+
+# ============================================================================
+# DATABASE INSERT FUNCTIONS (For Creating Masked Tables)
+# ============================================================================
+
+def insert_into_postgres_table(
+    host: str,
+    port: int,
+    database_name: str,
+    username: str,
+    password: str,
+    table_name: str,
+    rows: List[Dict[str, Any]],
+) -> int:
+    """
+    Insert masked data into a new PostgreSQL table.
+    
+    Creates the table if it doesn't exist, then inserts all rows.
+    """
+    try:
+        import psycopg2
+        
+        port = port or 5432
+        
+        connection = psycopg2.connect(
+            host=host,
+            port=port,
+            database=database_name,
+            user=username,
+            password=password,
+            connect_timeout=10
+        )
+        
+        cursor = connection.cursor()
+        
+        if not rows:
+            return 0
+        
+        columns = list(rows[0].keys())
+        
+        # Create table if not exists (all columns as TEXT for simplicity)
+        column_defs = ', '.join([f'"{col}" TEXT' for col in columns])
+        create_query = f'CREATE TABLE IF NOT EXISTS "{table_name}" ({column_defs})'
+        cursor.execute(create_query)
+        
+        # Clear existing data
+        cursor.execute(f'DELETE FROM "{table_name}"')
+        
+        # Insert rows
+        placeholders = ', '.join(['%s'] * len(columns))
+        column_names = ', '.join([f'"{col}"' for col in columns])
+        insert_query = f'INSERT INTO "{table_name}" ({column_names}) VALUES ({placeholders})'
+        
+        rows_affected = 0
+        for row in rows:
+            values = [str(row.get(col, '')) for col in columns]
+            cursor.execute(insert_query, values)
+            rows_affected += cursor.rowcount
+        
+        connection.commit()
+        cursor.close()
+        connection.close()
+        
+        logger.info(f"[DB INSERT] Inserted {rows_affected} rows into PostgreSQL table {table_name}")
+        return rows_affected
+        
+    except Exception as e:
+        logger.error(f"[DB INSERT] Failed to insert into PostgreSQL table: {str(e)}")
+        raise
+
+
+def insert_into_mysql_table(
+    host: str,
+    port: int,
+    database_name: str,
+    username: str,
+    password: str,
+    table_name: str,
+    rows: List[Dict[str, Any]],
+) -> int:
+    """
+    Insert masked data into a new MySQL table.
+    """
+    try:
+        import mysql.connector
+        
+        port = port or 3306
+        
+        connection = mysql.connector.connect(
+            host=host,
+            port=port,
+            database=database_name,
+            user=username,
+            password=password,
+            connection_timeout=10
+        )
+        
+        cursor = connection.cursor()
+        
+        if not rows:
+            return 0
+        
+        columns = list(rows[0].keys())
+        
+        # Create table if not exists
+        column_defs = ', '.join([f'`{col}` TEXT' for col in columns])
+        create_query = f'CREATE TABLE IF NOT EXISTS `{table_name}` ({column_defs})'
+        cursor.execute(create_query)
+        
+        # Clear existing data
+        cursor.execute(f'DELETE FROM `{table_name}`')
+        
+        # Insert rows
+        placeholders = ', '.join(['%s'] * len(columns))
+        column_names = ', '.join([f'`{col}`' for col in columns])
+        insert_query = f'INSERT INTO `{table_name}` ({column_names}) VALUES ({placeholders})'
+        
+        rows_affected = 0
+        for row in rows:
+            values = [str(row.get(col, '')) for col in columns]
+            cursor.execute(insert_query, values)
+            rows_affected += cursor.rowcount
+        
+        connection.commit()
+        cursor.close()
+        connection.close()
+        
+        logger.info(f"[DB INSERT] Inserted {rows_affected} rows into MySQL table {table_name}")
+        return rows_affected
+        
+    except Exception as e:
+        logger.error(f"[DB INSERT] Failed to insert into MySQL table: {str(e)}")
+        raise
+
+
+def insert_into_sqlite_table(
+    database_name: str,
+    table_name: str,
+    rows: List[Dict[str, Any]],
+) -> int:
+    """
+    Insert masked data into a new SQLite table.
+    """
+    try:
+        db_path = database_name.strip() if database_name and database_name.strip() else DEFAULT_SQLITE_DB
+        
+        if not os.path.isabs(db_path):
+            module_dir = os.path.dirname(os.path.abspath(__file__))
+            backend_dir = os.path.dirname(module_dir)
+            db_path = os.path.join(backend_dir, db_path)
+        
+        connection = sqlite3.connect(db_path, timeout=10)
+        cursor = connection.cursor()
+        
+        if not rows:
+            return 0
+        
+        columns = list(rows[0].keys())
+        
+        # Create table if not exists
+        column_defs = ', '.join([f'`{col}` TEXT' for col in columns])
+        create_query = f'CREATE TABLE IF NOT EXISTS `{table_name}` ({column_defs})'
+        cursor.execute(create_query)
+        
+        # Clear existing data
+        cursor.execute(f'DELETE FROM `{table_name}`')
+        
+        # Insert rows
+        placeholders = ', '.join(['?'] * len(columns))
+        column_names = ', '.join([f'`{col}`' for col in columns])
+        insert_query = f'INSERT INTO `{table_name}` ({column_names}) VALUES ({placeholders})'
+        
+        rows_affected = 0
+        for row in rows:
+            values = [str(row.get(col, '')) for col in columns]
+            cursor.execute(insert_query, values)
+            rows_affected += cursor.rowcount
+        
+        connection.commit()
+        cursor.close()
+        connection.close()
+        
+        logger.info(f"[DB INSERT] Inserted {rows_affected} rows into SQLite table {table_name}")
+        return rows_affected
+        
+    except Exception as e:
+        logger.error(f"[DB INSERT] Failed to insert into SQLite table: {str(e)}")
+        raise
